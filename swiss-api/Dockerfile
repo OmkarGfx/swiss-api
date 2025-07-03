@@ -1,19 +1,18 @@
-# Use a base Node image with build tools
 FROM node:18
 
-# Install dependencies required for swisseph native build
+# Install system dependencies required for native modules (like swisseph)
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy everything
+# Copy project files
 COPY . .
 
-# Install dependencies
+# Install dependencies using npm (instead of npm ci to avoid native module issues)
 RUN npm install
 
-# Expose the port your app runs on
+# Expose the port the app runs on
 EXPOSE 3000
 
 # Start the server
