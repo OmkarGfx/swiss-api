@@ -1,5 +1,4 @@
-
-import swisseph from "swisseph";
+import swe from "swisseph";
 import tzlookup from "tz-lookup";
 import NodeGeocoder from "node-geocoder";
 
@@ -25,109 +24,155 @@ const geocoder = NodeGeocoder({
   provider: "openstreetmap",
 });
 
-/**
- * Convert date/time to Julian Day
- * @param date Date object in UTC
- * @returns Julian Day number
- */
-function toJulianDay(date: Date): number {
-  return swisseph.swe_julday(
-    date.getUTCFullYear(),
-    date.getUTCMonth() + 1,
-    date.getUTCDate(),
-    date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600,
-    swisseph.SE_GREG_CAL
-  );
+// Set path to ephemeris files (adjust if your 'ephe' folder is elsewhere)
+// This needs to be accessible from where your Node.js server runs.
+// For Vercel/serverless, you might need to bundle these files or use a different approach.
+// For local development, ensure the './ephe' folder exists relative to your build output.
+swe.swe_set_ephe_path('./ephe');
+
+export interface BirthData {
+  date: string; // 'YYYY-MM-DD'
+  time: string; // 'HH:mm'
+  lat: number;
+  lon: number;
+  tzid?: string; // Timezone identifier (e.g., 'America/New_York')
+}
+
+export interface PlanetPosition {
+  name: string;
+  longitude: number;
+  retrograde: boolean;
 }
 
 /**
- * Get timezone offset in hours for a given lat/lon and date
- * @param lat Latitude
- * @param lon Longitude
- * @param date Date object
- * @returns offset in hours (e.g. +5.5)
+ * Helper function to geocode a location string to lat/lon and timezone
+ * @param location Location string (e.g. "New York, NY")
+ * @returns {latitude, longitude, tzid} or null if not found or error
  */
-function getTimezoneOffsetHours(lat: number, lon: number, date: Date): number {
-  const tz = tzlookup(lat, lon);
-  // Use Intl API to get offset in minutes
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    timeZoneName: "short",
-  });
-  const parts = dtf.formatToParts(date);
-  const tzName = parts.find((p) => p.type === "timeZoneName")?.value || "";
-  // Create a date string with timezone and parse offset
-  const localDate = new Date(date.toLocaleString("en-US", { timeZone: tz }));
-  const offsetMinutes = (date.getTime() - localDate.getTime()) / 60000;
-  return -offsetMinutes / 60;
+export async function geocodeAndGetTimezone(
+  location: string
+): Promise<{ latitude: number; longitude: number; tzid: string } | null> {
+  try {
+    const geoResults = await geocoder.geocode(location);
+    if (!geoResults || geoResults.length === 0 || geoResults[0].latitude === undefined || geoResults[0].longitude === undefined) {
+      console.warn("Geocoding failed for location:", location);
+      return null;
+    }
+    const { latitude, longitude } = geoResults[0];
+    const tzid = tzlookup(latitude, longitude);
+    return { latitude, longitude, tzid };
+  } catch (error) {
+    console.error("Geocoding or Timezone lookup error:", error);
+    return null;
+  }
 }
 
 /**
- * Main function to get planetary positions
- * @param birthDate Date of birth (local time)
- * @param latitude Latitude of birth location
- * @param longitude Longitude of birth location
- * @returns Array of planetary positions with longitude and retrograde flag
+ * Calculates planetary positions using Swiss Ephemeris.
+ * @param birth Birth data including date, time, lat, lon, and tzid.
+ * @returns Array of planetary positions.
  */
-export async function getPlanetaryPositions(
-  birthDate: Date,
-  latitude: number,
-  longitude: number
-): Promise<
-  {
-    planet: string;
-    longitude: number;
-    retrograde: boolean;
-  }[]
-> {
-  // Adjust birthDate to UTC by subtracting timezone offset
-  const tzOffset = getTimezoneOffsetHours(latitude, longitude, birthDate);
-  const utcDate = new Date(birthDate.getTime() - tzOffset * 3600 * 1000);
+export function getPlanetPositions(birth: BirthData): PlanetPosition[] {
+  // Parse date/time
+  const [year, month, day] = birth.date.split('-').map(Number);
+  const [hour, minute] = birth.time.split(':').map(Number);
 
-  // Calculate Julian Day in UTC
-  const jd = toJulianDay(utcDate);
+  // Calculate timezone offset in hours for the specific date/time/location
+  let tzOffsetHours = 0;
+  if (birth.tzid) {
+      try {
+          // Use Intl.DateTimeFormat to get the offset for the target timezone at the specific date/time
+          // This is a more reliable way than relying on the system's local timezone offset.
+          const dateForOffset = new Date(Date.UTC(year, month - 1, day, hour, minute)); // Create a UTC date object for the moment
+          const options: Intl.DateTimeFormatOptions = {
+              timeZone: birth.tzid,
+              timeZoneName: 'shortOffset', // e.g., "GMT-5", "UTC+1:00"
+              year: 'numeric', month: 'numeric', day: 'numeric',
+              hour: 'numeric', minute: 'numeric', second: 'numeric'
+          };
+          const formatter = new Intl.DateTimeFormat('en-US', options);
+          const parts = formatter.formatToParts(dateForOffset);
+          const offsetPart = parts.find(p => p.type === 'timeZoneName');
 
-  // Set ephemeris path to default (optional)
-  swisseph.swe_set_ephe_path("");
+          if (offsetPart && offsetPart.value) {
+              // Parse offset string like "GMT-5" or "UTC+1:00"
+              const offsetMatch = offsetPart.value.match(/GMT([+-]\d+)(:\d+)?/);
+              if (offsetMatch && offsetMatch[1]) {
+                  tzOffsetHours = parseInt(offsetMatch[1], 10);
+                  if (offsetMatch[2]) {
+                      tzOffsetHours += parseInt(offsetMatch[2].substring(1), 10) / 60;
+                  }
+              } else {
+                   console.warn("Could not parse timezone offset string:", offsetPart.value);
+                   // Fallback to 0 or handle error
+              }
+          } else {
+              console.warn("Could not get timezone offset part from formatter for TZID:", birth.tzid);
+              // Fallback to 0 or handle error
+          }
 
-  const results = [];
-
-  for (const planet of PLANETS) {
-    const flag = swisseph.SEFLG_SPEED; // to get speed for retrograde check
-    const planetPos = await new Promise<{
-      longitude: number;
-      speed: number;
-
-    }>((resolve, reject) => {
-      swisseph.swe_calc_ut(jd, planet, flag, (tjd, ipl, iflag, xxr, serr) => {
-        if (serr) reject(new Error(serr));
-        else
-          resolve({
-            longitude: xxr.longitude,
-            speed: xxr.longitudeSpeed,
-          });
-      });
-    });
-
-    results.push({
-      planet: swisseph.swe_get_planet_name(planet).name,
-      longitude: planetPos.longitude,
-      retrograde: planetPos.speed < 0,
-    });
+      } catch (e) {
+          console.error("Error calculating timezone offset:", e);
+          // Assume UTC if timezone calculation fails
+      }
   }
 
-  return results;
-}
+  // Calculate Julian Day for Universal Time (UT)
+  // Calculate JD for the local time, then subtract the offset in days.
+  // swe_julday expects 1-based month.
+  const jd_local = swe.swe_julday(year, month, day, hour + minute / 60, swe.SE_GREG_CAL);
 
-/**
- * Helper function to geocode a location string to lat/lon
- * @param location Location string (e.g. "New York, NY")
- * @returns {latitude, longitude} or null if not found
- */
-export async function geocodeLocation(
-  location: string
-): Promise<{ latitude: number; longitude: number } | null> {
-  const res = await geocoder.geocode(location);
-  if (res.length === 0) return null;
-  return { latitude: res[0].latitude, longitude: res[0].longitude };
+  const jd_ut = jd_local - (tzOffsetHours / 24);
+
+  // Planets to calculate (Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Rahu)
+  const PLANETS_TO_CALC = [
+    { name: 'Sun', id: swe.SE_SUN },
+    { name: 'Moon', id: swe.SE_MOON },
+    { name: 'Mercury', id: swe.SE_MERCURY },
+    { name: 'Venus', id: swe.SE_VENUS },
+    { name: 'Mars', id: swe.SE_MARS },
+    { name: 'Jupiter', id: swe.SE_JUPITER },
+    { name: 'Saturn', id: swe.SE_SATURN },
+    { name: 'Uranus', id: swe.SE_URANUS },
+    { name: 'Neptune', id: swe.SE_NEPTUNE },
+    { name: 'Pluto', id: swe.SE_PLUTO },
+    { name: 'Rahu', id: swe.SE_MEAN_NODE }, // Mean North Node
+  ];
+
+   const positions: PlanetPosition[] = [];
+
+   PLANETS_TO_CALC.forEach(({ name, id }) => {
+       // Use SEFLG_SPEED to get speed for retrograde check
+       const flag = swe.SEFLG_SWIEPH | swe.SEFLG_SPEED;
+       // swe_calc_ut returns an object with properties when using the Node.js wrapper
+       const result = swe.swe_calc_ut(jd_ut, id, flag);
+
+       // The swisseph npm types indicate the result has named properties like longitude, longitudeSpeed
+       // Check if result is valid and has expected properties
+       if (typeof result !== 'object' || result === null || typeof result.longitude !== 'number' || typeof result.longitudeSpeed !== 'number') {
+            console.error(`Invalid result or missing properties for ${name}:`, result);
+            // Optionally skip this planet or add an error placeholder
+            return;
+       }
+
+       positions.push({
+           name,
+           longitude: result.longitude, // Access longitude by name
+           retrograde: result.longitudeSpeed < 0 // Retrograde if speed in longitude is negative
+       });
+   });
+
+   // Calculate Ketu (South Node) 180 degrees opposite Rahu
+   const rahuPos = positions.find(p => p.name === 'Rahu');
+   if (rahuPos) {
+       let ketuLon = rahuPos.longitude + 180;
+       if (ketuLon >= 360) ketuLon -= 360;
+       positions.push({
+           name: 'Ketu',
+           longitude: ketuLon,
+           retrograde: rahuPos.retrograde // Nodes are always retrograde together
+       });
+   }
+
+  return positions;
 }

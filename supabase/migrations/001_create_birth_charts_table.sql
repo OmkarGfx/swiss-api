@@ -1,10 +1,11 @@
--- Migration to create birth_charts table for caching astrology birth chart results
-
-create table if not exists birth_charts (
-  id bigint generated always as identity primary key,
-  cache_key text unique not null,
-  birth_datetime timestamptz not null,
-  location text not null,
-  positions jsonb not null,
-  created_at timestamptz default now()
+create table birth_charts (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid references auth.users,
+  birth_date date,
+  birth_time time,
+  lat double precision,
+  lon double precision,
+  tzid text,
+  chart jsonb,
+  created_at timestamp default now()
 );

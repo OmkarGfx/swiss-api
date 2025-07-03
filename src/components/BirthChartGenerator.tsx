@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import type { NextApiRequest, NextApiResponse } from "next";
 
 interface PlanetPosition {
   planet: string;
@@ -98,4 +99,23 @@ export default function BirthChartGenerator() {
       )}
     </div>
   );
+}
+
+export async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const { birthDate, birthTime, location } = req.body;
+
+  if (!birthDate || !birthTime || !location) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  // Step 1: Just echo back the data for now
+  res.status(200).json({
+    positions: [],
+    received: { birthDate, birthTime, location },
+    cached: false,
+  });
 }
