@@ -14,14 +14,16 @@ app.use(bodyParser.json());
 swisseph.swe_set_ephe_path('./ephe');
 
 // POST /api/birth-chart
-app.post('/api/birth-chart', (req, res) => {
+app.post('/api/birth-chart', async (req, res) => {
   const { birthDate, birthTime, latitude, longitude } = req.body;
   if (!birthDate || !birthTime || typeof latitude !== 'number' || typeof longitude !== 'number') {
     return res.status(400).json({ error: 'Missing required fields' });
   }
   try {
+    // 1. Parse date/time and calculate Julian Day
     const [year, month, day] = birthDate.split('-').map(Number);
     const [hour, minute] = birthTime.split(':').map(Number);
+    // 2. Get timezone
     const tzid = tzlookup(latitude, longitude);
     // Calculate timezone offset in hours
     let tzOffsetHours = 0;
@@ -46,10 +48,10 @@ app.post('/api/birth-chart', (req, res) => {
         }
       }
     } catch (e) {}
-    // Calculate Julian Day for Universal Time (UT)
+    // Julian Day for Universal Time (UT)
     const jd_local = swisseph.swe_julday(year, month, day, hour + minute / 60, swisseph.SE_GREG_CAL);
     const jd_ut = jd_local - (tzOffsetHours / 24);
-    // Planets
+    // 3. Calculate planetary positions
     const PLANETS = [
       { name: 'Sun', id: swisseph.SE_SUN },
       { name: 'Moon', id: swisseph.SE_MOON },
@@ -58,12 +60,9 @@ app.post('/api/birth-chart', (req, res) => {
       { name: 'Mars', id: swisseph.SE_MARS },
       { name: 'Jupiter', id: swisseph.SE_JUPITER },
       { name: 'Saturn', id: swisseph.SE_SATURN },
-      { name: 'Uranus', id: swisseph.SE_URANUS },
-      { name: 'Neptune', id: swisseph.SE_NEPTUNE },
-      { name: 'Pluto', id: swisseph.SE_PLUTO },
       { name: 'Rahu', id: swisseph.SE_MEAN_NODE },
     ];
-    const planets = PLANETS.map(({ name, id }) => {
+    const positions = PLANETS.map(({ name, id }) => {
       const flag = swisseph.SEFLG_SWIEPH | swisseph.SEFLG_SPEED;
       const result = swisseph.swe_calc_ut(jd_ut, id, flag);
       return {
@@ -72,21 +71,22 @@ app.post('/api/birth-chart', (req, res) => {
         retrograde: result.longitudeSpeed < 0
       };
     });
-    // Ketu (South Node)
-    const rahu = planets.find(p => p.name === 'Rahu');
+    // 4. Ketu (South Node)
+    const rahu = positions.find(p => p.name === 'Rahu');
     if (rahu) {
       let ketuLon = rahu.longitude + 180;
       if (ketuLon >= 360) ketuLon -= 360;
-      planets.push({
+      positions.push({
         name: 'Ketu',
         longitude: ketuLon,
         retrograde: rahu.retrograde
       });
     }
+    // 5. Return JSON response
     res.json({
       julianDay: jd_ut,
       timezone: tzid,
-      planets
+      positions
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
