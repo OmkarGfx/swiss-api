@@ -1,6 +1,7 @@
 {
   "name": "swiss-api",
   "version": "1.0.0",
+<<<<<<< HEAD
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -15,5 +16,16 @@
     "express": "^5.1.0",
     "swisseph": "^0.5.17",
     "tz-lookup": "^6.1.25"
+=======
+  "main": "swiss-express-api.js",
+  "scripts": {
+    "start": "node swiss-express-api.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "tz-lookup": "^6.1.33"
+>>>>>>> f26e4c33be33796c9b1496fd50c511e6b061135b
   }
 }
