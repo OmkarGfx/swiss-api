@@ -1,28 +1,10 @@
 import swe from "swisseph";
 import tzlookup from "tz-lookup";
-import NodeGeocoder from "node-geocoder";
 
 /**
  * Planet constants from swisseph
  * 0=Sun, 1=Moon, 2=Mars, 3=Mercury, 4=Jupiter, 5=Venus, 6=Saturn, 7=Uranus, 8=Neptune, 9=Pluto
  */
-const PLANETS = [
-  swisseph.SE_SUN,
-  swisseph.SE_MOON,
-  swisseph.SE_MARS,
-  swisseph.SE_MERCURY,
-  swisseph.SE_JUPITER,
-  swisseph.SE_VENUS,
-  swisseph.SE_SATURN,
-  swisseph.SE_URANUS,
-  swisseph.SE_NEPTUNE,
-  swisseph.SE_PLUTO,
-];
-
-// Initialize geocoder with OpenStreetMap provider (free)
-const geocoder = NodeGeocoder({
-  provider: "openstreetmap",
-});
 
 // Set path to ephemeris files (adjust if your 'ephe' folder is elsewhere)
 // This needs to be accessible from where your Node.js server runs.
@@ -44,8 +26,14 @@ export interface PlanetPosition {
   retrograde: boolean;
 }
 
+export interface SWECalcResult {
+  longitude: number;
+  longitudeSpeed: number;
+  // Add other properties if needed
+}
+
 /**
- * Helper function to geocode a location string to lat/lon and timezone
+ * Helper function to geocode a location string to lat/lon and timezone using PositionStack API
  * @param location Location string (e.g. "New York, NY")
  * @returns {latitude, longitude, tzid} or null if not found or error
  */
@@ -53,12 +41,20 @@ export async function geocodeAndGetTimezone(
   location: string
 ): Promise<{ latitude: number; longitude: number; tzid: string } | null> {
   try {
-    const geoResults = await geocoder.geocode(location);
-    if (!geoResults || geoResults.length === 0 || geoResults[0].latitude === undefined || geoResults[0].longitude === undefined) {
+    const access_key = '4517eb9e903079c566ee70bd4305f3f2';
+    const url = `https://api.positionstack.com/v1/forward?access_key=${access_key}&query=${encodeURIComponent(location)}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch geocoding data');
+    const data = await response.json();
+    if (!data.data || !data.data.length) {
       console.warn("Geocoding failed for location:", location);
       return null;
     }
-    const { latitude, longitude } = geoResults[0];
+    const { latitude, longitude } = data.data[0];
+    if (latitude === undefined || longitude === undefined) {
+      console.warn("Geocoding result missing lat/lon for location:", location);
+      return null;
+    }
     const tzid = tzlookup(latitude, longitude);
     return { latitude, longitude, tzid };
   } catch (error) {
@@ -145,7 +141,7 @@ export function getPlanetPositions(birth: BirthData): PlanetPosition[] {
        // Use SEFLG_SPEED to get speed for retrograde check
        const flag = swe.SEFLG_SWIEPH | swe.SEFLG_SPEED;
        // swe_calc_ut returns an object with properties when using the Node.js wrapper
-       const result = swe.swe_calc_ut(jd_ut, id, flag);
+       const result = swe.swe_calc_ut(jd_ut, id, flag) as SWECalcResult;
 
        // The swisseph npm types indicate the result has named properties like longitude, longitudeSpeed
        // Check if result is valid and has expected properties
